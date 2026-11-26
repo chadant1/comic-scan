@@ -252,6 +252,10 @@ $('#idForm').addEventListener('submit', async e => {
   finally { busy = false; setStatus(null); }
 });
 
+// GCD's image server won't show covers on other sites, so they come through the relay.
+const cover = u => !u ? 'icons/no-cover.svg'
+  : /^https:\/\/files\d*\.comics\.org\//.test(u) && api.relayUrl() ? `${api.relayUrl()}/img?u=${encodeURIComponent(u)}` : u;
+
 /* ---- cover reading (no barcode) and photos ---- */
 async function coverSearch(canvas) {
   busy = true;
@@ -302,7 +306,7 @@ function tile(i) {
   if (i.isSeries) return `<button class="tile" data-series="${esc(i.series)}" data-year="${esc(i.year || '')}">
     <img loading="lazy" src="icons/no-cover.svg" alt=""><b>${esc(t)}</b><span>Series · ${esc(i.coverDate || '')} · tap, then add the issue #</span></button>`;
   return `<button class="tile" data-id="${esc(i.id)}">
-    <img loading="lazy" src="${esc(i.image || 'icons/no-cover.svg')}" alt="" onerror="this.src='icons/no-cover.svg'">
+    <img loading="lazy" src="${esc(cover(i.image))}" alt="" onerror="this.src='icons/no-cover.svg'">
     <b>${esc(t)}</b><span>${esc(when(i.coverDate))}</span></button>`;
 }
 function bindTiles(root) {
@@ -365,7 +369,7 @@ async function openComic(id) {
 
   v.innerHTML = `
     <div class="comic-head">
-      <img src="${esc(c.image || 'icons/no-cover.svg')}" alt="Cover of ${esc(name)}" onerror="this.src='icons/no-cover.svg'">
+      <img src="${esc(cover(c.image))}" alt="Cover of ${esc(name)}" onerror="this.src='icons/no-cover.svg'">
       <div>
         <h2>${esc(name)}</h2>
         ${variantLine}${c.title ? `<div class="sub">“${esc(c.title)}”</div>` : ''}
@@ -502,7 +506,7 @@ function renderHistory() {
   const root = $('#historyList');
   if (!list.length) { root.innerHTML = '<p class="empty">Comics you look up will show up here.</p>'; return; }
   root.innerHTML = list.map(h => `<button class="item" data-id="${esc(h.id)}">
-      <img loading="lazy" src="${esc(h.image || 'icons/no-cover.svg')}" alt="" onerror="this.src='icons/no-cover.svg'">
+      <img loading="lazy" src="${esc(cover(h.image))}" alt="" onerror="this.src='icons/no-cover.svg'">
       <div><b>${esc(h.name)}</b><span>${esc(h.publisher || '')}</span></div>
       <div class="v">${h.low != null ? 'from ' + money(h.low) : ''}</div></button>`).join('');
   root.querySelectorAll('.item').forEach(b => b.addEventListener('click', () => go('#comic/' + b.dataset.id)));

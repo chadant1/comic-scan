@@ -71,12 +71,21 @@ const clean = s => String(s || '').trim().slice(0, 120);
 
 export default {
   async fetch(req, env) {
+    const url = new URL(req.url);
+    // Cover images: GCD's image server refuses images embedded on other sites, so
+    // pass them through here. Only comics.org cover files; cached at Cloudflare's edge.
+    if (url.pathname === '/img') {
+      const u = url.searchParams.get('u') || '';
+      if (!/^https:\/\/files\d*\.comics\.org\/[\w\/.-]+\.(jpe?g|png|gif|webp)$/i.test(u)) return new Response('Bad image', { status: 400 });
+      const r = await fetch(u, { headers: { 'User-Agent': UA_BROWSER, Referer: 'https://www.comics.org/' }, cf: { cacheTtl: 30 * 86400, cacheEverything: true } });
+      if (!r.ok) return new Response('Image unavailable', { status: 502 });
+      return new Response(r.body, { headers: { 'Content-Type': r.headers.get('Content-Type') || 'image/jpeg', 'Cache-Control': 'public, max-age=2592000', 'Access-Control-Allow-Origin': '*' } });
+    }
     const origin = allowedOrigin(req, env);
     if (req.method === 'OPTIONS') return json({}, 204, origin);
     if (req.method !== 'GET') return json({ error: 'Method not allowed' }, 405, origin);
     if (!origin) return json({ error: 'This relay only serves the ComicScan app.' }, 403, null);
 
-    const url = new URL(req.url);
     const p = url.searchParams;
     try {
       switch (url.pathname.replace(/\/+$/, '')) {

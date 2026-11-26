@@ -1,5 +1,5 @@
 // Lets ComicScan open offline and keeps the barcode reader cached.
-const VERSION = 'comicscan-v1';
+const VERSION = 'comicscan-v2';
 const SHELL = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css', 'css/comic.css',
   'js/app.js', 'js/api.js', 'js/barcode.js', 'js/cover.js', 'js/config.js', 'js/net.js', 'js/store.js',
