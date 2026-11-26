@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "comic-scan-relay",
+  "main": "src/index.js",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "vars": {
+    // Websites allowed to use this relay (comma-separated). Your GitHub Pages site:
+    "ALLOWED_ORIGINS": "https://chadant1.github.io"
+  },
+  // Free key-value cache so repeat lookups don't hit Metron or the shops again.
+  "kv_namespaces": [
+    { "binding": "CACHE" }
+  ]
+}

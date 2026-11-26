@@ -1,0 +1,16 @@
+{
+  "name": "ComicScan – Comic Identifier & Prices",
+  "short_name": "ComicScan",
+  "description": "Scan a comic's barcode to identify the exact issue and see what comic shops are selling it for right now.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f1115",
+  "theme_color": "#d6402f",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

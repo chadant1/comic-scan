@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="system">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>ComicScan – Comic Identifier &amp; Prices</title>
+  <meta name="description" content="Scan a comic's barcode to identify the exact issue and see what comic shops are selling it for right now.">
+  <meta name="theme-color" content="#f5f6f8" id="metaTheme">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="ComicScan">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="css/comic.css">
+  <script>
+    try { document.documentElement.dataset.theme = localStorage.getItem('cs.theme') || 'system'; } catch (e) {}
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <button class="icon-btn hidden" id="backBtn" aria-label="Back">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
+    </button>
+    <h1 id="title">ComicScan</h1>
+    <button class="icon-btn" id="themeBtn" aria-label="Switch light / dark mode">
+      <svg viewBox="0 0 24 24" aria-hidden="true" class="ico-sun"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/></svg>
+      <svg viewBox="0 0 24 24" aria-hidden="true" class="ico-moon"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg>
+    </button>
+  </header>
+
+  <main id="main">
+    <!-- SCAN -->
+    <section class="view" id="view-scan" data-title="Scan a comic">
+      <div class="notice hidden" id="setupNotice"></div>
+      <div class="camera-wrap wide" id="cameraWrap">
+        <video id="video" playsinline muted autoplay></video>
+        <div class="bc-guide" id="guide" aria-hidden="true">
+          <span class="c tl"></span><span class="c tr"></span><span class="c bl"></span><span class="c br"></span>
+          <div class="laser"></div>
+        </div>
+        <div class="cam-msg" id="camMsg">
+          <p id="camMsgText">Tap <b>Start camera</b>, then point it at the <b>barcode</b> on the comic's cover.<br><small>The picture is read on your phone and never saved.</small></p>
+          <button class="btn primary" id="startCamBtn">Start camera</button>
+        </div>
+        <div class="scan-status hidden" id="scanStatus"><span class="spinner"></span><span id="scanStatusText">Looking for a barcode…</span></div>
+      </div>
+      <p class="hint" id="scanHint">Fit the whole barcode, including the <b>5 small digits</b> printed beside it, inside the box. It scans by itself.</p>
+      <div class="scan-actions">
+        <button class="btn icon" id="torchBtn" disabled aria-label="Flashlight">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 2h8l-2 7h4l-9 13 2-9H7z"/></svg>
+        </button>
+        <button class="btn" id="coverBtn" disabled>No barcode? Read the cover</button>
+        <label class="btn icon" aria-label="Read a photo instead">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="M21 16l-5-5-8 8"/></svg>
+          <input type="file" accept="image/*" id="photoInput" hidden>
+        </label>
+      </div>
+
+      <div class="panel hidden" id="addonPanel">
+        <h3>Almost there</h3>
+        <p class="small">I read the barcode <b id="addonBase"></b>, but not the 5 small digits next to it. Type them, or just the issue number:</p>
+        <form id="addonForm" class="row">
+          <input id="addonInput" inputmode="numeric" pattern="[0-9]*" maxlength="5" placeholder="e.g. 00311 or 3" style="flex:1">
+          <button class="btn primary">Look up</button>
+        </form>
+      </div>
+
+      <details class="ocr-debug" id="scanDebug">
+        <summary>What the scanner read</summary>
+        <pre id="scanText">Nothing yet.</pre>
+      </details>
+    </section>
+
+    <!-- CHOOSE -->
+    <section class="view hidden" id="view-choose" data-title="Which comic is it?">
+      <p class="lead" id="chooseLead"></p>
+      <div class="grid" id="chooseGrid"></div>
+      <p class="small muted center">Comic data from the <a href="https://www.comics.org" target="_blank" rel="noopener">Grand Comics Database</a></p>
+    </section>
+
+    <!-- SEARCH -->
+    <section class="view hidden" id="view-search" data-title="Find a comic">
+      <form id="searchForm" class="search-grid">
+        <input id="searchSeries" type="search" placeholder="Series, e.g. Amazing Spider-Man" autocomplete="off" required>
+        <input id="searchNum" placeholder="Issue #" autocomplete="off">
+        <input id="searchYear" inputmode="numeric" placeholder="Year" autocomplete="off">
+        <button class="btn primary">Search</button>
+      </form>
+      <p class="muted small" id="searchInfo"></p>
+      <div class="grid" id="searchGrid"></div>
+      <p class="small muted center">Comic data from the <a href="https://www.comics.org" target="_blank" rel="noopener">Grand Comics Database</a></p>
+    </section>
+
+    <!-- COMIC -->
+    <section class="view hidden" id="view-comic" data-title="Comic"></section>
+
+    <!-- RECENT -->
+    <section class="view hidden" id="view-history" data-title="Recent">
+      <div id="historyList" class="list"></div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section class="view hidden" id="view-settings" data-title="Settings">
+      <div class="panel">
+        <h2>Appearance</h2>
+        <div class="seg" id="themeSeg" role="radiogroup" aria-label="Theme">
+          <button data-v="system" role="radio">System</button>
+          <button data-v="light" role="radio">Light</button>
+          <button data-v="dark" role="radio">Dark</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Where prices come from</h2>
+        <p class="small">ComicScan checks these shops each time you look a comic up and lists what they're selling it for right now, cheapest first:</p>
+        <ul class="small stores-list">
+          <li><b>MyComicShop</b>: back issues, CGC slabs and auctions</li>
+          <li><b>Midtown Comics</b>: new and back issues, slabs</li>
+          <li><b>Comic Source</b> (formerly Newkadia): back issues by grade</li>
+          <li><b>Infinity Flux</b>: new releases and variants</li>
+          <li><b>InStockTrades</b>: trade paperbacks and hardcovers</li>
+        </ul>
+        <p class="small muted">Amazon, eBay sold listings, PriceCharting and GoCollect are one tap away on each comic's page. ComicScan is free, with no account needed.</p>
+      </div>
+
+      <div class="panel">
+        <h2>Privacy</h2>
+        <p class="small">The camera picture is read on your phone and never saved or uploaded. Only the barcode number or the title you search for is sent, to look the comic up.</p>
+      </div>
+
+      <div class="panel">
+        <h2>Storage</h2>
+        <div class="row">
+          <button class="btn" id="clearCache">Clear saved results</button>
+          <button class="btn danger" id="clearHistory">Clear recent comics</button>
+        </div>
+      </div>
+
+      <details class="panel small">
+        <summary>Advanced</summary>
+        <label class="field"><span>Relay address</span><input id="relayUrl" autocomplete="off" spellcheck="false" placeholder="https://comic-scan-relay.…workers.dev"></label>
+        <div class="row"><button class="btn" id="saveRelay">Save</button><button class="btn ghost" id="testRelay">Test</button></div>
+        <p class="small muted" id="relayStatus"></p>
+      </details>
+
+      <p class="small muted center">ComicScan v1.0 · Comic data: <a href="https://www.comics.org" target="_blank" rel="noopener">Grand Comics Database</a> (CC BY-SA 4.0) · Prices: the shops listed above<br>Not affiliated with any publisher or shop.</p>
+    </section>
+  </main>
+
+  <nav class="tabbar" id="tabbar">
+    <button data-view="scan" class="active">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><path d="M8 8v8M10.5 8v8M13 8v8M16 8v8"/></svg>
+      <span>Scan</span>
+    </button>
+    <button data-view="search">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5"/></svg>
+      <span>Search</span>
+    </button>
+    <button data-view="history">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.4-5.7L4 8.5"/><path d="M4 4v4.5h4.5M12 8v4l3 2"/></svg>
+      <span>Recent</span>
+    </button>
+    <button data-view="settings">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+      <span>Settings</span>
+    </button>
+  </nav>
+
+  <div class="toast hidden" id="toast" role="status"></div>
+
+  <script src="vendor/zxing/zxing-reader.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js" defer></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

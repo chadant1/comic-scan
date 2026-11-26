@@ -1,0 +1,17 @@
+{
+  "name": "comic-scan-relay",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Free relay for the ComicScan app: comic lookups (Metron) and current comic-shop prices.",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "linkedom": "^0.18.12"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
