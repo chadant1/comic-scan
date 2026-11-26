@@ -1,24 +1,40 @@
 // Grand Comics Database (https://www.comics.org) – open comic data (CC BY-SA 4.0).
 //  • Issue details and title search come from GCD's public data API (no login).
-//  • Barcode → issue comes from a small index this repo builds from GCD's
-//    monthly data download and publishes on its `data` branch.
+//  • Barcode → issue: each series' UPC is learned once (see byCode/searchWithCode).
 
 const GCD = 'https://www.comics.org';
-const INDEX = 'https://raw.githubusercontent.com/chadant1/comic-scan/data';
 const UA = 'ComicScanRelay/1.0 (+https://github.com/chadant1/comic-scan)';
 
 export class GcdError extends Error {
   constructor(message, status) { super(message); this.status = status; }
 }
 
+// GCD allows only about 20 API requests a minute. When it says "slow down", stop
+// asking for a minute (shared across the relay through KV) instead of piling on.
+let coolUntil = 0;
+let coolKv = null;
+export function useKv(kv) { coolKv = kv; }
+const COOL = 'gcd:cooldown';
+
 async function api(path) {
+  if (Date.now() < coolUntil) throw new GcdError('The comic database is busy. Try again in a minute.', 429);
+  if (coolKv && !coolUntil) {
+    const t = await coolKv.get(COOL).catch(() => null);
+    if (t && Date.now() < t) { coolUntil = t; throw new GcdError('The comic database is busy. Try again in a minute.', 429); }
+  }
   const url = path.startsWith('http') ? path : GCD + path;
   const res = await fetch(url + (url.includes('?') ? '&' : '?') + 'format=json', {
     headers: { Accept: 'application/json', 'User-Agent': UA },
     signal: AbortSignal.timeout(25000),
   });
   if (res.status === 404) return null;
-  if (res.status === 429) throw new GcdError('The comic database is busy. Try again in a minute.', 429);
+  if (res.status === 429) {
+    const wait = Math.min(300, Math.max(60, +res.headers.get('retry-after') || 60));
+    coolUntil = Date.now() + wait * 1000;
+    if (coolKv) await coolKv.put(COOL, coolUntil, wait).catch(() => {});
+    throw new GcdError('The comic database is busy. Try again in a minute.', 429);
+  }
+  coolUntil = 0;
   const type = res.headers.get('content-type') || '';
   if (!res.ok || !type.includes('json')) throw new GcdError(`The comic database didn’t answer (${res.status}).`, 502);
   return res.json();
@@ -145,12 +161,6 @@ function brief(r) {
   };
 }
 
-async function withCovers(list, n = 8) {
-  await Promise.all(list.slice(0, n).map(async b => {
-    try { const d = await api(`/api/issue/${b.id}/`); b.image = d?.cover || null; } catch (e) { /* no cover */ }
-  }));
-  return list;
-}
 
 /** Title search: series name (+ issue number, + series start year). */
 export async function search({ series: name, number, year }) {
@@ -167,7 +177,7 @@ export async function search({ series: name, number, year }) {
   // Main covers first, newest series first.
   list.sort((a, b) => (a.isVariant - b.isVariant) || ((b.year || 0) - (a.year || 0)));
   list = list.slice(0, 40);
-  return withCovers(list);
+  return list; // covers load when an issue is opened (each one costs a GCD request)
 }
 
 /* ---------------- barcodes ----------------
@@ -251,10 +261,10 @@ function briefFromRaw(d, exact) {
 }
 
 /** Check candidate issue ids (main covers first) in small batches until the exact barcode turns up. */
-async function confirm(ids, p, kv, cap = 30) {
+async function confirm(ids, p, kv, cap = 12) {
   const seen = [];
-  for (let i = 0; i < Math.min(ids.length, cap); i += 6) {
-    const batch = await Promise.all(ids.slice(i, i + 6).map(id => rawIssue(id, kv).catch(() => null)));
+  for (let i = 0; i < Math.min(ids.length, cap); i += 3) {
+    const batch = await Promise.all(ids.slice(i, i + 3).map(id => rawIssue(id, kv).catch(() => null)));
     for (const d of batch) {
       if (!d) continue;
       if (sameCode(d.barcode, p)) return { exact: d, seen };
@@ -295,7 +305,7 @@ export async function searchWithCode({ series: name, number, year, code }, kv) {
   const rows = (r?.results || []).filter(x => x.api_url && /\/issue\//.test(x.api_url));
   rows.sort((a, b) => (!!a.variant_of - !!b.variant_of));
   const ids = rows.map(x => idOf(x.api_url)).filter(Boolean);
-  const { exact, seen } = await confirm(ids, p, kv, 40);
+  const { exact, seen } = await confirm(ids, p, kv, 15);
   if (exact) {
     if (kv) await kv.put(`upc:${p.base}`, { seriesId: exact.series, series: exact.series_name }, 0);
     return { issues: [briefFromRaw(exact, true)], exact: true };

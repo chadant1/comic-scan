@@ -87,6 +87,7 @@ export default {
     if (!origin) return json({ error: 'This relay only serves the ComicScan app.' }, 403, null);
 
     const p = url.searchParams;
+    gcd.useKv(kvFor(env));
     try {
       switch (url.pathname.replace(/\/+$/, '')) {
         case '':
