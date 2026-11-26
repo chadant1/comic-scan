@@ -73,3 +73,6 @@ html[data-theme="dark"] .key { background: #3a3017; color: #f3d78a; }
 .tile img { aspect-ratio: 2 / 3; object-fit: cover; }
 .item img { aspect-ratio: 2 / 3; object-fit: cover; }
 details.panel summary { cursor: pointer; font-weight: 600; }
+
+.id-form { display: grid; grid-template-columns: 1fr 90px; gap: 8px; }
+.id-form #idSeries, .id-form button { grid-column: 1 / -1; }

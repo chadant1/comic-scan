@@ -5,9 +5,14 @@
 
 import { parseHTML } from 'linkedom';
 import { searchAll } from './stores.js';
+
+// Some shops write attribute names in capitals (<div Class=…>); browsers ignore case, linkedom doesn't.
+const parse = html => parseHTML(String(html).replace(/(<[a-zA-Z][^>]*?\s)(Class|CLASS|ID|Id|HREF|Href|SRC|Src)=/g, (m, a, b) => a + b.toLowerCase() + '=')).document;
 import * as gcd from './gcd.js';
 
 const HOUR = 3600;
+const V = 'v3:'; // bump to invalidate cached results
+const UA_BROWSER = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';
 const mem = new Map(); // per-isolate cache
 
 function allowedOrigin(req, env) {
@@ -33,7 +38,8 @@ function json(data, status, origin, maxAge = 0) {
   });
 }
 
-async function cached(env, key, ttl, fn) {
+async function cached(env, key0, ttl, fn) {
+  const key = V + key0;
   const hit = mem.get(key);
   if (hit && hit.exp > Date.now()) return hit.val;
   if (env.CACHE) {
@@ -50,6 +56,16 @@ async function cached(env, key, ttl, fn) {
   }
   return val;
 }
+
+async function kvGet(env, key) {
+  if (!env.CACHE) return null;
+  try { return await env.CACHE.get((key.startsWith('upc:') ? '' : V) + key, 'json'); } catch (e) { return null; }
+}
+async function kvPut(env, key, val, ttl) {
+  if (!env.CACHE) return;
+  try { await env.CACHE.put((key.startsWith('upc:') ? '' : V) + key, JSON.stringify(val), ttl ? { expirationTtl: Math.max(60, ttl) } : undefined); } catch (e) { /* write limit */ }
+}
+const kvFor = env => (env.CACHE ? { get: k => kvGet(env, k), put: (k, v, ttl) => kvPut(env, k, v, ttl) } : null);
 
 const clean = s => String(s || '').trim().slice(0, 120);
 
@@ -71,8 +87,21 @@ export default {
         case '/api/code': {
           const code = clean(p.get('code')).replace(/\D/g, '');
           if (code.length < 10 || code.length > 18) return json({ error: 'That barcode doesn’t look right.' }, 400, origin);
-          const issues = await cached(env, `code:${code}`, 7 * 24 * HOUR, () => gcd.byCode(code));
-          return json({ issues }, 200, origin, HOUR);
+          const hit = await kvGet(env, `exact:${code}`);
+          if (hit) return json({ issues: [hit], exact: true }, 200, origin);
+          const r = await gcd.byCode(code, kvFor(env));
+          if (r.exact) await kvPut(env, `exact:${code}`, r.issues[0], 30 * 24 * HOUR);
+          return json(r, 200, origin);
+        }
+
+        case '/api/identify': {
+          // First scan of a new series: the user typed the series title.
+          const code = clean(p.get('code')).replace(/\D/g, '');
+          const series = clean(p.get('series'));
+          if (!series || code.length < 10) return json({ error: 'Need the barcode and the series title.' }, 400, origin);
+          const r = await gcd.searchWithCode({ series, number: clean(p.get('number')), year: +p.get('year') || null, code }, kvFor(env));
+          if (r.exact) await kvPut(env, `exact:${code}`, r.issues[0], 30 * 24 * HOUR);
+          return json(r, 200, origin);
         }
 
         case '/api/search': {
@@ -103,8 +132,27 @@ export default {
           };
           if (!ctx.series) return json({ error: 'Missing series.' }, 400, origin);
           const key = `prices:${ctx.series.toLowerCase()}|${ctx.number}|${ctx.year}|${ctx.volume}|${ctx.trade ? 1 : 0}`;
-          const stores = await cached(env, key, 2 * HOUR, () => searchAll(ctx, html => parseHTML(html).document));
+          const stores = await cached(env, key, 2 * HOUR, () => searchAll(ctx, parse));
           return json({ stores, fetchedAt: Date.now() }, 200, origin, 30 * 60);
+        }
+
+        case '/api/debug': {
+          // Shows what one shop returns to the relay (for troubleshooting).
+          const { STORES } = await import('./stores.js');
+          const st = STORES.find(s => s.id === p.get('store'));
+          if (!st) return json({ error: 'unknown store' }, 400, origin);
+          const ctx = { series: clean(p.get('series')) || 'Amazing Spider-Man', number: clean(p.get('number')) || '300', year: +p.get('year') || null };
+          const url = st.searchUrl(ctx);
+          const res = await fetch(url, { headers: { 'User-Agent': UA_BROWSER, Accept: 'text/html,application/xhtml+xml', 'Accept-Language': 'en-US,en;q=0.9' }, redirect: 'follow' });
+          const html = await res.text();
+          const doc = parse(html);
+          return json({
+            url, status: res.status, finalUrl: res.url, length: html.length,
+            title: doc.querySelector('title')?.textContent?.trim() || '',
+            counts: { liIssue: doc.querySelectorAll('li.issue').length, productCard: doc.querySelectorAll('div.product-card').length, item: doc.querySelectorAll('div.item').length },
+            parsed: st.parse ? st.parse(doc, ctx).length : null,
+            start: html.replace(/\s+/g, ' ').slice(0, 600),
+          }, 200, origin);
         }
 
         default:

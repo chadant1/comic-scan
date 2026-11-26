@@ -59,12 +59,13 @@
         </label>
       </div>
 
-      <div class="panel hidden" id="addonPanel">
-        <h3>Almost there</h3>
-        <p class="small">I read the barcode <b id="addonBase"></b>, but not the 5 small digits next to it. Type them, or just the issue number:</p>
-        <form id="addonForm" class="row">
-          <input id="addonInput" inputmode="numeric" pattern="[0-9]*" maxlength="5" placeholder="e.g. 00311 or 3" style="flex:1">
-          <button class="btn primary">Look up</button>
+      <div class="panel hidden" id="idPanel">
+        <h3 id="idTitle">Almost there</h3>
+        <p class="small" id="idText"></p>
+        <form id="idForm" class="id-form">
+          <input id="idSeries" autocomplete="off" placeholder="Series title on the cover, e.g. Absolute Batman">
+          <input id="idNum" inputmode="numeric" autocomplete="off" placeholder="Issue #">
+          <button class="btn primary">Find it</button>
         </form>
       </div>
 
@@ -117,13 +118,12 @@
         <h2>Where prices come from</h2>
         <p class="small">ComicScan checks these shops each time you look a comic up and lists what they're selling it for right now, cheapest first:</p>
         <ul class="small stores-list">
-          <li><b>MyComicShop</b>: back issues, CGC slabs and auctions</li>
           <li><b>Midtown Comics</b>: new and back issues, slabs</li>
           <li><b>Comic Source</b> (formerly Newkadia): back issues by grade</li>
           <li><b>Infinity Flux</b>: new releases and variants</li>
           <li><b>InStockTrades</b>: trade paperbacks and hardcovers</li>
         </ul>
-        <p class="small muted">Amazon, eBay sold listings, PriceCharting and GoCollect are one tap away on each comic's page. ComicScan is free, with no account needed.</p>
+        <p class="small muted">MyComicShop (which doesn't allow automatic checks), Amazon, eBay sold listings, PriceCharting and GoCollect are one tap away on each comic's page. ComicScan is free, with no account needed.</p>
       </div>
 
       <div class="panel">

@@ -236,7 +236,8 @@ function shopify(id, name, origin) {
 export const comicsource = shopify('comicsource', 'Comic Source (Newkadia)', 'https://comicsource.com');
 export const infinityflux = shopify('infinityflux', 'Infinity Flux', 'https://infinityflux.net');
 
-export const STORES = [mycomicshop, midtown, comicsource, infinityflux, instocktrades];
+// MyComicShop blocks requests from servers (bot protection), so the app links to it instead.
+export const STORES = [midtown, comicsource, infinityflux, instocktrades];
 
 /** Run every store; never throws. parseHTML(html) must return a Document-like object. */
 export async function searchAll(ctx, parseHTML) {
@@ -246,7 +247,13 @@ export async function searchAll(ctx, parseHTML) {
     try {
       let items;
       if (s.run) items = await s.run(ctx);
-      else items = s.parse(parseHTML(await get(s.searchUrl(ctx))), ctx);
+      else {
+        const html = await get(s.searchUrl(ctx));
+        if (html.length < 4000 && /<iframe/i.test(html) && /noindex/i.test(html)) {
+          return { ...base, ok: false, blocked: true, error: 'this shop blocks automatic price checks – tap “Open site” to see its prices', items: [] };
+        }
+        items = s.parse(parseHTML(html), ctx);
+      }
       items.sort((a, b) => (a.price ?? 1e9) - (b.price ?? 1e9));
       return { ...base, ok: true, items: items.slice(0, 25) };
     } catch (e) {

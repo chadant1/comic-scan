@@ -149,12 +149,16 @@ function grab(el, maxW = 1400) {
 
 let busy = false;
 let baseOnly = { base: null, count: 0 };
+let lastHit = { code: null, t: 0 };
 async function scanFrame() {
   const c = grab($('#guide'));
   const img = c.getContext('2d').getImageData(0, 0, c.width, c.height);
   c.width = c.height = 0;
   const r = await barcode.read(img);
   if (!r) return;
+  if (pending && r.base === pending.base) return;               // already asking about this one
+  if (lastHit.code === r.code && Date.now() - lastHit.t < 6000) return;
+  lastHit = { code: r.code, t: Date.now() };
   if (r.addon || r.isbn) { baseOnly = { base: null, count: 0 }; return found(r); }
   // Got the UPC but not its add-on yet: keep trying for a moment before asking.
   if (baseOnly.base === r.base) baseOnly.count++; else baseOnly = { base: r.base, count: 1 };
@@ -173,7 +177,7 @@ async function found(r) {
   $('#guide').classList.add('found');
   if (navigator.vibrate) navigator.vibrate(30);
   $('#scanText').textContent = `Barcode: ${r.base}${r.addon ? '  add-on: ' + r.addon : ''}${r.isbn ? '  (ISBN)' : ''}`;
-  $('#addonPanel').classList.add('hidden');
+  $('#idPanel').classList.add('hidden');
   setStatus('Looking it up…');
   try { await lookupCode(r.code, r); }
   finally {
@@ -183,31 +187,69 @@ async function found(r) {
   }
 }
 
+let pending = null; // the barcode being identified
+
 async function lookupCode(code, r = {}) {
-  let list;
-  try { list = await api.byCode(code); }
+  let res;
+  try { res = await api.byCode(code); }
   catch (e) { handleApiError(e); return; }
-  if (list.length === 1) return go('#comic/' + list[0].id);
-  if (list.length > 1) { chooseState = { list, lead: `This barcode matches ${list.length} comics. Tap yours:` }; return go('#choose'); }
-  if (r.base && !r.isbn) { askAddon(r.base, true); return; }
+  if (res.exact && res.issues?.length) return go('#comic/' + res.issues[0].id);
+  if (res.needSeries) {
+    pending = { code, base: res.base || r.base, issue: res.issueNumber || '' };
+    return askSeries(res.series);
+  }
+  if (res.issues?.length) { chooseState = { list: res.issues, lead: `Found ${res.series || 'the series'} #${res.issueNumber || ''}, but not this exact cover. Tap yours:` }; return go('#choose'); }
   toast('That barcode isn’t in the comic database yet. Try the Search tab.');
 }
 
-function askAddon(base, notFound = false) {
-  $('#addonBase').textContent = base;
-  $('#addonPanel').classList.remove('hidden');
-  $('#addonPanel h3').textContent = notFound ? 'Not found with those digits' : 'Almost there';
-  $('#addonInput').value = '';
+function showIdPanel(title, html, { series = false, seriesValue = '', num = '' } = {}) {
+  $('#idTitle').textContent = title;
+  $('#idText').innerHTML = html;
+  $('#idSeries').classList.toggle('hidden', !series);
+  $('#idSeries').required = series;
+  $('#idSeries').value = seriesValue;
+  $('#idNum').value = num;
+  $('#idPanel').classList.remove('hidden');
   setStatus(null);
-  $('#addonPanel').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  $('#idPanel').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  (series ? $('#idSeries') : $('#idNum')).focus();
 }
-$('#addonForm').addEventListener('submit', async e => {
+
+function askAddon(base) {
+  pending = { code: null, base, issue: '', needAddon: true };
+  showIdPanel('Almost there', `I read the barcode <b>${esc(base)}</b> but not the 5 small digits beside it. Type the issue number (or those 5 digits):`);
+}
+
+function askSeries(knownSeries) {
+  showIdPanel('First scan of this series',
+    `Nobody has scanned this series yet. Type its title as printed on the cover. After this, everyone's scans of this series are identified automatically.`,
+    { series: true, seriesValue: knownSeries || '', num: pending.issue || '' });
+}
+
+$('#idForm').addEventListener('submit', async e => {
   e.preventDefault();
-  const code = barcode.withAddon($('#addonBase').textContent, $('#addonInput').value);
-  if (!code) return toast('Type the 5 small digits, or the issue number.');
+  if (!pending) return;
   busy = true;
   setStatus('Looking it up…');
-  try { await lookupCode(code, {}); } finally { busy = false; setStatus(null); }
+  $('#idPanel').classList.add('hidden');
+  try {
+    if (pending.needAddon) {
+      const code = barcode.withAddon(pending.base, $('#idNum').value);
+      if (!code) { toast('Type the issue number.'); $('#idPanel').classList.remove('hidden'); return; }
+      pending = null;
+      await lookupCode(code, {});
+      return;
+    }
+    const series = $('#idSeries').value.trim();
+    if (!series) { $('#idPanel').classList.remove('hidden'); return; }
+    setStatus('Checking the comic database (can take a few seconds)…');
+    const r = await api.identify({ code: pending.code, series, number: $('#idNum').value.trim() || pending.issue });
+    if (r.exact && r.issues.length) { pending = null; return go('#comic/' + r.issues[0].id); }
+    if (r.issues?.length) { chooseState = { list: r.issues, lead: 'I couldn’t confirm the exact barcode. Tap your comic:' }; return go('#choose'); }
+    toast('No match. Check the title spelling (e.g. “Amazing Spider-Man”).');
+    $('#idPanel').classList.remove('hidden');
+  } catch (err) { handleApiError(err); $('#idPanel').classList.remove('hidden'); }
+  finally { busy = false; setStatus(null); }
 });
 
 /* ---- cover reading (no barcode) and photos ---- */
@@ -339,11 +381,12 @@ async function openComic(id) {
     </div>
     <div class="panel" id="pricePanel">
       <h3>For sale right now <small>cheapest first</small></h3>
-      <div class="loading"><span class="spinner dark"></span>Checking MyComicShop, Midtown, Comic Source, Infinity Flux${trade ? ', InStockTrades' : ''}…</div>
+      <div class="loading"><span class="spinner dark"></span>Checking Midtown, Comic Source, Infinity Flux${trade ? ', InStockTrades' : ''}…</div>
     </div>
     <div class="panel">
       <h3>Check other sites</h3>
       <div class="links">
+        <a class="btn" target="_blank" rel="noopener" href="https://www.mycomicshop.com/search?q=${encodeURIComponent(`${c.series} ${c.number}`)}">MyComicShop</a>
         <a class="btn" target="_blank" rel="noopener" href="https://www.amazon.com/s?k=${qYear}&i=stripbooks">Amazon</a>
         <a class="btn" target="_blank" rel="noopener" href="https://www.ebay.com/sch/i.html?_nkw=${qYear}&LH_Sold=1&LH_Complete=1">eBay sold</a>
         <a class="btn" target="_blank" rel="noopener" href="https://www.pricecharting.com/search-products?q=${qYear}&type=prices">PriceCharting</a>
@@ -416,6 +459,7 @@ async function loadPrices(c, trade, token, force) {
 
   const storeHTML = s => {
     const head = `<div class="store-head"><b>${esc(s.name)}${s.items.length ? ` · ${s.items.length}` : ''}</b><a href="${esc(s.searchUrl)}" target="_blank" rel="noopener">Open site ›</a></div>`;
+    if (s.blocked) return `<div class="store">${head}<div class="store-empty">This shop doesn’t allow automatic price checks. Tap “Open site” to see its copies.</div></div>`;
     if (!s.ok) return `<div class="store">${head}<div class="store-empty">Couldn’t check right now (${esc(s.error)}).</div></div>`;
     if (!s.items.length) return `<div class="store">${head}<div class="store-empty">None in stock right now.</div></div>`;
     const first = s.items.slice(0, 5).map(offer).join('');

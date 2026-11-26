@@ -170,36 +170,139 @@ export async function search({ series: name, number, year }) {
   return withCovers(list);
 }
 
-/* ---------------- barcode index (built from GCD's data download) ---------------- */
+/* ---------------- barcodes ----------------
+ * A US comic barcode = 12-digit UPC (identifies the SERIES) + 5-digit add-on
+ * (issue number, cover, printing). GCD stores every issue's barcode, so:
+ *  1. If the relay has already learned which GCD series a UPC belongs to, it looks the
+ *     issue number up in that series and confirms the exact barcode.
+ *  2. Otherwise the app asks for the series title once; the match is confirmed against
+ *     GCD's barcode and remembered for everyone.
+ */
 
-const shardKey = base => base.slice(0, 7);
+const digits = s => String(s || '').replace(/\D/g, '');
+
+export function parseCode(code) {
+  let d = digits(code);
+  let base = d, addon = '';
+  if (d.length === 18 && d.startsWith('0')) d = d.slice(1);
+  if (d.length === 17) { base = d.slice(0, 12); addon = d.slice(12); }
+  else if (d.length === 13 && d.startsWith('0') && !/^97[89]/.test(d)) base = d.slice(1);
+  else base = d;
+  return {
+    code: base + addon, base, addon: addon || null,
+    issue: addon ? String(+addon.slice(0, 3)) : null,
+    cover: addon ? addon[3] : null,
+    printing: addon ? addon[4] : null,
+    isbn: /^97[89]\d{10}$/.test(base),
+  };
+}
+
+function sameCode(gcdBarcode, p) {
+  for (const raw of String(gcdBarcode || '').split(/[;,]/)) {
+    let g = digits(raw);
+    if (g.length === 18 && g.startsWith('0')) g = g.slice(1);
+    if (g.length === 13 && g.startsWith('0') && !/^97[89]/.test(g)) g = g.slice(1);
+    if (!g) continue;
+    if (p.addon ? g === p.base + p.addon : g.slice(0, 12) === p.base || g === p.base) return true;
+  }
+  return false;
+}
+const sameBase = (gcdBarcode, p) => String(gcdBarcode || '').split(/[;,]/).some(raw => {
+  let g = digits(raw);
+  if (g.length === 18 && g.startsWith('0')) g = g.slice(1);
+  if (g.length === 13 && g.startsWith('0')) g = g.slice(1);
+  return g.slice(0, 12) === p.base;
+});
+
+const lead = desc => String(desc || '').replace(/\s*\[.*$/, '').trim();
+
+async function seriesIssues(id, kv) {
+  const key = `series:${id}`;
+  const hit = kv && await kv.get(key);
+  if (hit) return hit;
+  const s = await api(`/api/series/${id}/`);
+  if (!s) return null;
+  const out = {
+    id, name: s.name, year: s.year_began || null,
+    issues: (s.active_issues || []).map((u, i) => [idOf(u), String(s.issue_descriptors?.[i] || '')]),
+  };
+  if (kv) await kv.put(key, out, 24 * 3600);
+  return out;
+}
+
+const detailCache = new Map();
+async function rawIssue(id, kv) {
+  if (detailCache.has(id)) return detailCache.get(id);
+  const key = `raw:${id}`;
+  let d = null;
+  if (!d) {
+    const full = await api(`/api/issue/${id}/`);
+    if (!full) return null;
+    d = { id, series_name: full.series_name, descriptor: full.descriptor, number: full.number, barcode: full.barcode, variant_name: full.variant_name, variant_of: full.variant_of, publication_date: full.publication_date, cover: full.cover, series: idOf(full.series) };
+    // (kept in memory only: the free KV plan allows ~1,000 writes a day)
+  }
+  detailCache.set(id, d);
+  return d;
+}
+
+function briefFromRaw(d, exact) {
+  const sn = splitSeries(d.series_name);
+  return { id: d.id, series: sn.name, year: sn.year, number: d.number || lead(d.descriptor), variant: d.variant_name || null, isVariant: !!d.variant_of, title: `${d.series_name} #${d.descriptor}`, coverDate: d.publication_date || null, image: d.cover || null, exact: !!exact };
+}
+
+/** Check candidate issue ids (main covers first) in small batches until the exact barcode turns up. */
+async function confirm(ids, p, kv, cap = 30) {
+  const seen = [];
+  for (let i = 0; i < Math.min(ids.length, cap); i += 6) {
+    const batch = await Promise.all(ids.slice(i, i + 6).map(id => rawIssue(id, kv).catch(() => null)));
+    for (const d of batch) {
+      if (!d) continue;
+      if (sameCode(d.barcode, p)) return { exact: d, seen };
+      seen.push(d);
+    }
+  }
+  return { exact: null, seen };
+}
 
 /**
- * Look a scanned code up. `code` is 12/13 digits, or 17 with the 5-digit add-on.
- * Returns briefs, best first. An exact match (incl. add-on) is returned alone.
+ * Look a scanned code up. Returns { issues, exact, needSeries, issueNumber }.
+ * kv: { get(key), put(key, value, ttlSeconds) } (may be null)
  */
-export async function byCode(code) {
-  const digits = String(code).replace(/\D/g, '');
-  let base = digits, addon = '';
-  if (digits.length === 17 || digits.length === 18) { base = digits.slice(0, -5); addon = digits.slice(-5); }
-  if (base.length === 13 && base.startsWith('0') && !/^97[89]/.test(base)) base = base.slice(1);
-  const res = await fetch(`${INDEX}/b/${shardKey(base)}.json`, { signal: AbortSignal.timeout(10000) });
-  if (res.status === 404) return [];
-  if (!res.ok) throw new GcdError('The barcode list is unavailable right now.', 502);
-  const shard = await res.json();
-  const rows = shard[base] || [];
-  if (!rows.length) return [];
-  // rows: [issueId, addon, "Series (year)", "number", "variant name"]
-  const toBrief = ([id, ad, label, num, variant]) => {
-    const sn = /^(.*?)\s*\((\d{4})\)$/.exec(label) || [null, label, null];
-    return { id, series: sn[1], year: sn[2] ? +sn[2] : null, number: num, variant: variant || null, title: `${label} #${num}${variant ? ` [${variant}]` : ''}`, coverDate: null, image: null, addon: ad };
-  };
-  if (addon) {
-    const exact = rows.filter(r => r[1] === addon);
-    if (exact.length) return withCovers(exact.map(toBrief), 6);
-    const sameIssue = rows.filter(r => r[1] && r[1].slice(0, 3) === addon.slice(0, 3));
-    if (sameIssue.length) return withCovers(sameIssue.map(toBrief), 8);
+export async function byCode(code, kv) {
+  const p = parseCode(code);
+  const known = kv && await kv.get(`upc:${p.base}`);
+  if (!known) return { issues: [], exact: false, needSeries: true, issueNumber: p.issue, base: p.base, addon: p.addon };
+  const s = await seriesIssues(known.seriesId, kv);
+  if (!s) return { issues: [], exact: false, needSeries: true, issueNumber: p.issue, base: p.base, addon: p.addon };
+  let ids = s.issues.filter(([, desc]) => !p.issue || lead(desc) === p.issue).map(([id]) => id);
+  if (!ids.length) return { issues: [], exact: false, needSeries: true, issueNumber: p.issue, base: p.base, addon: p.addon, series: s.name };
+  // the cover digit tells which cover: "1" is normally the main cover (listed first)
+  if (p.cover && p.cover !== '1') ids = ids.slice(1).concat(ids.slice(0, 1));
+  const { exact, seen } = await confirm(ids, p, kv);
+  if (exact) return { issues: [briefFromRaw(exact, true)], exact: true, needSeries: false };
+  return { issues: seen.map(d => briefFromRaw(d, false)).slice(0, 25), exact: false, needSeries: false, issueNumber: p.issue, series: s.name };
+}
+
+/** Title search that also checks a scanned barcode and remembers the series for next time. */
+export async function searchWithCode({ series: name, number, year, code }, kv) {
+  const p = parseCode(code);
+  const n = encodeURIComponent(name.trim());
+  const num = number || p.issue;
+  const path = num
+    ? (year ? `/api/series/name/${n}/issue/${encodeURIComponent(num)}/year/${year}/` : `/api/series/name/${n}/issue/${encodeURIComponent(num)}/`)
+    : (year ? `/api/series/name/${n}/year/${year}/` : `/api/series/name/${n}/`);
+  const r = await api(path);
+  const rows = (r?.results || []).filter(x => x.api_url && /\/issue\//.test(x.api_url));
+  rows.sort((a, b) => (!!a.variant_of - !!b.variant_of));
+  const ids = rows.map(x => idOf(x.api_url)).filter(Boolean);
+  const { exact, seen } = await confirm(ids, p, kv, 40);
+  if (exact) {
+    if (kv) await kv.put(`upc:${p.base}`, { seriesId: exact.series, series: exact.series_name }, 0);
+    return { issues: [briefFromRaw(exact, true)], exact: true };
   }
-  if (rows.length === 1 && !rows[0][1]) return withCovers(rows.map(toBrief), 1);
-  return withCovers(rows.slice(0, 25).map(toBrief), 8);
+  // No exact barcode match: still learn the series if a candidate shares the base UPC.
+  const sb = seen.find(d => sameBase(d.barcode, p));
+  if (sb && kv) await kv.put(`upc:${p.base}`, { seriesId: sb.series, series: sb.series_name }, 0);
+  const list = seen.map(d => briefFromRaw(d, false));
+  return { issues: list.length ? list : rows.slice(0, 30).map(brief), exact: false };
 }

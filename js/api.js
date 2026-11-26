@@ -32,7 +32,14 @@ async function call(path, params, { ttl = 0, key = null } = {}) {
 }
 
 export const health = () => call('/health', {});
-export const byCode = code => call('/api/code', { code }, { ttl: 7 * store.DAY, key: 'code.' + code }).then(r => r.issues || []);
+export const byCode = async code => {
+  const c = store.cached('api.code.' + code, 30 * store.DAY);
+  if (c) return c;
+  const r = await call('/api/code', { code });
+  if (r.exact) store.putCache('api.code.' + code, r);
+  return r;
+};
+export const identify = ({ code, series, number, year }) => call('/api/identify', { code, series, number, year });
 export const search = ({ series, number, year }) =>
   call('/api/search', { series, number, year }, { ttl: store.DAY, key: `search.${series.toLowerCase()}|${number || ''}|${year || ''}` }).then(r => r.issues || []);
 export const issue = id => call('/api/issue', { id }, { ttl: 7 * store.DAY, key: 'issue.' + id }).then(r => r.issue);

@@ -11,6 +11,6 @@
   },
   // Free key-value cache so repeat lookups don't hit Metron or the shops again.
   "kv_namespaces": [
-    { "binding": "CACHE" }
+    { "binding": "CACHE","id": "2515b08d83b14530a38f398112cdbb24" }
   ]
 }
