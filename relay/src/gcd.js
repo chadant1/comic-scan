@@ -15,7 +15,7 @@ async function api(path) {
   const url = path.startsWith('http') ? path : GCD + path;
   const res = await fetch(url + (url.includes('?') ? '&' : '?') + 'format=json', {
     headers: { Accept: 'application/json', 'User-Agent': UA },
-    signal: AbortSignal.timeout(12000),
+    signal: AbortSignal.timeout(25000),
   });
   if (res.status === 404) return null;
   if (res.status === 429) throw new GcdError('The comic database is busy. Try again in a minute.', 429);
@@ -72,7 +72,9 @@ async function series(url) {
 export async function issue(id) {
   const d = await api(`/api/issue/${encodeURIComponent(id)}/`);
   if (!d) return null;
-  const s = await series(d.series);
+  // The series/publisher endpoints are slow (up to ~10 s), so only use them
+  // briefly; the issue itself already carries the series name, year and indicia publisher.
+  const s = await Promise.race([series(d.series), new Promise(r => setTimeout(() => r(null), 3500))]);
   const sn = splitSeries(d.series_name);
   const credits = new Map();
   const add = (role, names) => { for (const n of names) { if (!credits.has(n)) credits.set(n, new Set()); credits.get(n).add(role); } };
