@@ -87,12 +87,16 @@ export default {
     if (!origin) return json({ error: 'This relay only serves the ComicScan app.' }, 403, null);
 
     const p = url.searchParams;
-    gcd.useKv(kvFor(env));
+    gcd.useKv(kvFor(env), env.GCD_LOGIN);
     try {
       switch (url.pathname.replace(/\/+$/, '')) {
         case '':
         case '/health':
-          return json({ ok: true, app: 'ComicScan relay', source: 'Grand Comics Database', cache: !!env.CACHE }, 200, origin);
+          {
+          let probe = null;
+          if (p.get('gcd')) { try { await gcd.issue(p.get('gcd')); probe = 'ok'; } catch (e) { probe = e.message; } }
+          return json({ ok: true, app: 'ComicScan relay', source: 'Grand Comics Database', cache: !!env.CACHE, gcd: { ...gcd.status, probe } }, 200, origin);
+        }
 
         case '/api/code': {
           const code = clean(p.get('code')).replace(/\D/g, '');

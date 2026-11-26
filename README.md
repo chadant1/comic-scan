@@ -35,6 +35,8 @@ No barcode? This happens with older comics. Tap **Read the cover**, or use the *
 
 **Updating the relay:** Cloudflare deploys from the **chadant1/comic-scan-relay** repo. Push changes there and Cloudflare redeploys within a minute or two. Keep `relay/` in this repo as a copy.
 
+**GCD's request limit:** GCD allows roughly 20 API requests a minute and a few hundred an hour. Without sign-in, requests from Cloudflare share that allowance with other Cloudflare sites, so lookups can pause. To give the relay its own allowance, add a GCD sign-in as a secret. In Cloudflare, open **Workers & Pages → comic-scan-relay → Settings → Variables and Secrets → Add**, choose type **Secret**, name it `GCD_LOGIN` and set the value to `email:password`. Deploy, then open `https://comic-scan-relay.chadahar-147.workers.dev/health?gcd=44451` from the app's site. It should show `"signedIn":true`. The secret is stored encrypted at Cloudflare. It is never in this repo, and app users never see it.
+
 **MyComicShop** blocks automated price checks from servers, so ComicScan links to it rather than listing its prices.
 
 ## Credits

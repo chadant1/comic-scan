@@ -13,7 +13,14 @@ export class GcdError extends Error {
 // asking for a minute (shared across the relay through KV) instead of piling on.
 let coolUntil = 0;
 let coolKv = null;
-export function useKv(kv) { coolKv = kv; }
+let auth = null;
+export const status = { last: null, at: null, retryAfter: null, signedIn: false };
+/** kv for the shared cooldown; login = "email:password" from the GCD_LOGIN secret (optional). */
+export function useKv(kv, login) {
+  coolKv = kv;
+  auth = login && login.includes(':') ? 'Basic ' + btoa(unescape(encodeURIComponent(login.trim()))) : null;
+  status.signedIn = !!auth;
+}
 const COOL = 'gcd:cooldown';
 
 async function api(path) {
@@ -24,15 +31,19 @@ async function api(path) {
   }
   const url = path.startsWith('http') ? path : GCD + path;
   const res = await fetch(url + (url.includes('?') ? '&' : '?') + 'format=json', {
-    headers: { Accept: 'application/json', 'User-Agent': UA },
+    headers: { Accept: 'application/json', 'User-Agent': UA, ...(auth ? { Authorization: auth } : {}) },
     signal: AbortSignal.timeout(25000),
   });
+  status.last = res.status; status.at = new Date().toISOString(); status.retryAfter = res.headers.get('retry-after');
   if (res.status === 404) return null;
+  if (res.status === 401 || res.status === 403) {
+    if (auth) throw new GcdError('The relay’s GCD sign-in was refused. Check the GCD_LOGIN secret.', 502);
+  }
   if (res.status === 429) {
-    const wait = Math.min(300, Math.max(60, +res.headers.get('retry-after') || 60));
+    const wait = Math.min(3600, Math.max(60, +res.headers.get('retry-after') || 60));
     coolUntil = Date.now() + wait * 1000;
     if (coolKv) await coolKv.put(COOL, coolUntil, wait).catch(() => {});
-    throw new GcdError('The comic database is busy. Try again in a minute.', 429);
+    throw new GcdError(wait > 120 ? `The comic database has hit its hourly limit. Try again in about ${Math.ceil(wait / 60)} minutes.` : 'The comic database is busy. Try again in a minute.', 429);
   }
   coolUntil = 0;
   const type = res.headers.get('content-type') || '';
